@@ -1,0 +1,52 @@
+name: Build APK
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare project
+        run: |
+          mkdir proj
+          if ls *.zip >/dev/null 2>&1; then unzip -q -o "$(ls *.zip | head -n1)" -d proj; else cp -r . proj/ ; fi
+          if [ ! -f proj/gradlew ] && [ ! -f proj/build.gradle ] && [ ! -f proj/settings.gradle ]; then d=$(dirname "$(find proj -name settings.gradle* | head -n1)"); mv "$d"/* proj/ 2>/dev/null || true; fi
+          ls proj
+      - name: Add OCR engine (runs inside the phone, no PC needed)
+        run: |
+          mkdir ocrtmp && cd ocrtmp && npm init -y >/dev/null && npm install tesseract.js@5.0.0 tesseract.js-core@5.0.0 --no-audit --no-fund
+          mkdir -p ../proj/app/src/main/assets/ocr
+          cp node_modules/tesseract.js/dist/tesseract.min.js node_modules/tesseract.js/dist/worker.min.js ../proj/app/src/main/assets/ocr/
+          cp node_modules/tesseract.js-core/tesseract-core*.wasm.js ../proj/app/src/main/assets/ocr/
+          ls -la ../proj/app/src/main/assets/ocr ../proj/app/src/main/assets/ocr/lang
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK packages
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;34.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Build debug APK
+        working-directory: proj
+        run: gradle assembleDebug --no-daemon
+      - name: Rename APK
+        run: cp proj/app/build/outputs/apk/debug/*.apk JudicialAssistant.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JudicialAgenda-APK
+          path: JudicialAssistant.apk
+      - name: Publish release with download link
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="apk-${{ github.run_number }}"
+          gh release create "$TAG" JudicialAssistant.apk --title "المساعد القضائي — نسخة $TAG" --notes "حمّل الملف JudicialAssistant.apk وثبّته على الهاتف"
+          URL="https://github.com/${{ github.repository }}/releases/download/$TAG/JudicialAssistant.apk"
+          echo "### رابط تحميل الـ APK" >> $GITHUB_STEP_SUMMARY
+          echo "$URL" >> $GITHUB_STEP_SUMMARY
